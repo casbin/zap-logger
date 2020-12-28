@@ -1,4 +1,4 @@
-module github.com/casbin/zap-logger
+module github.com/casbin/zap-logger/v2
 
 go 1.14
 
