@@ -34,7 +34,7 @@ func testNewLogger(t *testing.T) *Logger {
 }
 
 func testNewLoggerByZap(t *testing.T) *Logger {
-	var encoderConfig = zapcore.EncoderConfig{
+	encoderConfig := zapcore.EncoderConfig{
 		TimeKey:        "time",
 		LevelKey:       "level",
 		MessageKey:     "event",
@@ -58,11 +58,12 @@ func testNewLoggerByZap(t *testing.T) *Logger {
 }
 
 func testLoggerLog(t *testing.T, logger log.Logger) {
+	matrix := [][]string{{"whatever"}}
 	for i := 0; i < 10000; i++ {
-		logger.LogEnforce(1, "2", &[]interface{}{"3"}, &[]string{"4"}, &[]interface{}{"5"})
-		logger.LogPolicy(2, "3", []string{"4"}, []string{"5"}, &[]interface{}{"6"}, &[]interface{}{"7"})
-		logger.LogModel(3, []string{"4"}, [][]string{{"5"}, {"6"}})
-		logger.LogRole(5, "6", []string{"7"})
+		logger.LogEnforce("matcher", []interface{}{"a", "b", "c"}, true, matrix)
+		logger.LogPolicy(map[string][][]string{"a": matrix})
+		logger.LogModel(matrix)
+		logger.LogRole([]string{"admin"})
 	}
 }
 

@@ -15,32 +15,42 @@
 package zaplogger
 
 import (
+	"sync/atomic"
+
+	"github.com/casbin/casbin/v2/log"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
+var _ log.Logger = &Logger{}
+
 // Logger is the implementation for a Logger using zap.
 type Logger struct {
-	enabled bool
+	enabled int32
 	logger  *zap.Logger
 }
 
-// Mapping of event field.
-var logEventMap = map[int]string{
-	0: "LogTypeGrantedAccessRequest",
-	1: "LogTypeRejectedAccessRequest",
-	2: "LogTypeLoadPolicy",
-	3: "LogTypePrintModel",
-	4: "LogTypePrintPolicy",
-	5: "LogTypePrintRole",
-	6: "LogTypeLinkRole",
+type stringMatrix [][]string
+
+func (matrix stringMatrix) MarshalLogArray(enc zapcore.ArrayEncoder) error {
+	for _, vector := range matrix {
+		if err := enc.AppendArray(zapcore.ArrayMarshalerFunc(func(enc zapcore.ArrayEncoder) error {
+			for _, item := range vector {
+				enc.AppendString(item)
+			}
+			return nil
+		})); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // NewLogger is the default constructor for Logger.
 // Params : enabled, jsonEncode
 // enabled initialize recording state, jsonEncode initialize log whether structured as json.
 func NewLogger(enabled, jsonEncode bool) *Logger {
-	var encoderConfig = zapcore.EncoderConfig{
+	encoderConfig := zapcore.EncoderConfig{
 		TimeKey:        "time",
 		LevelKey:       "level",
 		MessageKey:     "event",
@@ -65,67 +75,83 @@ func NewLogger(enabled, jsonEncode bool) *Logger {
 		ErrorOutputPaths: []string{"stderr"},
 	}
 
-	logger, err := config.Build()
+	zapLogger, err := config.Build()
 	if err != nil {
 		panic(err)
 	}
 
-	return &Logger{enabled: enabled, logger: logger}
+	return NewLoggerByZap(zapLogger, enabled)
 }
 
 // NewLoggerByZap creates zap-logger by an existing zap instance.
 func NewLoggerByZap(zapLogger *zap.Logger, enabled bool) *Logger {
-	return &Logger{
-		enabled: enabled,
-		logger:  zapLogger,
+	logger := &Logger{
+		logger: zapLogger,
 	}
+	logger.EnableLog(enabled)
+	return logger
 }
 
 func (l *Logger) EnableLog(enable bool) {
-	l.enabled = enable
+	var enab int32
+	if enable {
+		enab = 1
+	}
+	atomic.StoreInt32(&l.enabled, enab)
 }
 
 func (l *Logger) IsEnabled() bool {
-	return l.enabled
+	return atomic.LoadInt32(&l.enabled) == 1
 }
 
-func (l *Logger) LogModel(event int, line []string, model [][]string) {
-	if !l.enabled {
+func (l *Logger) LogModel(model [][]string) {
+	if !l.IsEnabled() {
 		return
 	}
 
-	l.logger.Info(logEventMap[event], zap.Strings("line", line))
+	l.logger.Info("LogModel", zap.Array("model", stringMatrix(model)))
 }
 
-func (l *Logger) LogEnforce(event int, line string, request *[]interface{}, policies *[]string, result *[]interface{}) {
-	if !l.enabled {
+func (l *Logger) LogEnforce(matcher string, request []interface{}, result bool, explains [][]string) {
+	if !l.IsEnabled() {
 		return
 	}
 
-	l.logger.Info(logEventMap[event], zap.String("line", line))
+	l.logger.Info(
+		"LogEnforce",
+		zap.String("matcher", matcher),
+		zap.Array("request", zapcore.ArrayMarshalerFunc(func(enc zapcore.ArrayEncoder) error {
+			for _, v := range request {
+				if err := enc.AppendReflected(v); err != nil {
+					return err
+				}
+			}
+			return nil
+		})),
+		zap.Bool("result", result),
+		zap.Array("explains", stringMatrix(explains)),
+	)
 }
 
-func (l *Logger) LogPolicy(event int, line string, pPolicyFormat []string, gPolicyFormat []string, pPolicy *[]interface{}, gPolicy *[]interface{}) {
-	if !l.enabled {
+func (l *Logger) LogPolicy(policy map[string][][]string) {
+	if !l.IsEnabled() {
 		return
 	}
 
-	if pPolicy != nil {
-		for k, v := range *pPolicy {
-			l.logger.Info(logEventMap[event], zap.String("line", line), zap.Any("pPolicyFormat", pPolicyFormat[k]), zap.Any("pPolicy", v))
+	l.logger.Info("LogPolicy", zap.Object("policy", zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
+		for k, v := range policy {
+			if err := enc.AddArray(k, stringMatrix(v)); err != nil {
+				return err
+			}
 		}
-	}
-	if gPolicy != nil {
-		for k, v := range *gPolicy {
-			l.logger.Info(logEventMap[event], zap.String("line", line), zap.Any("gPolicyFormat", gPolicyFormat[k]), zap.Any("gPolicy", v))
-		}
-	}
+		return nil
+	})))
 }
 
-func (l *Logger) LogRole(event int, line string, role []string) {
-	if !l.enabled {
+func (l *Logger) LogRole(roles []string) {
+	if !l.IsEnabled() {
 		return
 	}
 
-	l.logger.Info(logEventMap[event], zap.String("line", line))
+	l.logger.Info("LogRole", zap.Strings("roles", roles))
 }
