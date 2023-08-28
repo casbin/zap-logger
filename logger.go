@@ -155,3 +155,11 @@ func (l *Logger) LogRole(roles []string) {
 
 	l.logger.Info("LogRole", zap.Strings("roles", roles))
 }
+
+func (l *Logger) LogError(err error, msg ...string) {
+	if !l.IsEnabled() {
+		return
+	}
+
+	l.logger.Error("LogError", zap.Error(err), zap.Strings("msg", msg))
+}
