@@ -21,10 +21,10 @@
   </p>
     
   <p  align="center">
-    <a href="https://github.com/casdoor/zap-logger/blob/master/LICENSE">
+    <a href="https://github.com/casbin/zap-logger/blob/master/LICENSE">
       <img src="https://img.shields.io/github/license/casbin/zap-logger?style=flat-square" alt="license">
     </a>
-    <a href="https://github.com/casdoor/zap-logger/issues">
+    <a href="https://github.com/casbin/zap-logger/issues">
       <img src="https://img.shields.io/github/issues/casbin/zap-logger?style=flat-square" alt="GitHub issues">
     </a>
     <a href="#">
