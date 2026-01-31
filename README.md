@@ -48,8 +48,8 @@
 You could import the zap-logger module like:
 ```
 import (
-    zaplogger "github.com/casbin/zap-logger/v2"
-    "github.com/casbin/casbin/v2"
+    zaplogger "github.com/casbin/zap-logger/v3"
+    "github.com/casbin/casbin/v3"
 )
 ```
 You could let your enforcer use this logger when you first initialize your enforcer like:

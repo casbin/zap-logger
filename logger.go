@@ -15,9 +15,11 @@
 package zaplogger
 
 import (
+	"fmt"
 	"sync/atomic"
+	"time"
 
-	"github.com/casbin/casbin/v2/log"
+	"github.com/casbin/casbin/v3/log"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -26,8 +28,10 @@ var _ log.Logger = &Logger{}
 
 // Logger is the implementation for a Logger using zap.
 type Logger struct {
-	enabled int32
-	logger  *zap.Logger
+	enabled     int32
+	logger      *zap.Logger
+	eventTypes  map[log.EventType]bool
+	logCallback func(entry *log.LogEntry) error
 }
 
 type stringMatrix [][]string
@@ -86,7 +90,8 @@ func NewLogger(enabled, jsonEncode bool) *Logger {
 // NewLoggerByZap creates zap-logger by an existing zap instance.
 func NewLoggerByZap(zapLogger *zap.Logger, enabled bool) *Logger {
 	logger := &Logger{
-		logger: zapLogger,
+		logger:     zapLogger,
+		eventTypes: make(map[log.EventType]bool),
 	}
 	logger.EnableLog(enabled)
 	return logger
@@ -104,62 +109,93 @@ func (l *Logger) IsEnabled() bool {
 	return atomic.LoadInt32(&l.enabled) == 1
 }
 
-func (l *Logger) LogModel(model [][]string) {
-	if !l.IsEnabled() {
-		return
+// SetEventTypes sets the event types that should be logged.
+// Only events matching these types will have IsActive set to true.
+func (l *Logger) SetEventTypes(eventTypes []log.EventType) error {
+	l.eventTypes = make(map[log.EventType]bool)
+	for _, et := range eventTypes {
+		l.eventTypes[et] = true
 	}
-
-	l.logger.Info("LogModel", zap.Array("model", stringMatrix(model)))
+	return nil
 }
 
-func (l *Logger) LogEnforce(matcher string, request []interface{}, result bool, explains [][]string) {
-	if !l.IsEnabled() {
-		return
+// OnBeforeEvent is called before an event occurs.
+// It sets the StartTime and determines if the event should be active based on configured event types.
+func (l *Logger) OnBeforeEvent(entry *log.LogEntry) error {
+	if entry == nil {
+		return fmt.Errorf("log entry is nil")
 	}
 
-	l.logger.Info(
-		"LogEnforce",
-		zap.String("matcher", matcher),
-		zap.Array("request", zapcore.ArrayMarshalerFunc(func(enc zapcore.ArrayEncoder) error {
-			for _, v := range request {
-				if err := enc.AppendReflected(v); err != nil {
-					return err
-				}
-			}
-			return nil
-		})),
-		zap.Bool("result", result),
-		zap.Array("explains", stringMatrix(explains)),
-	)
+	entry.StartTime = time.Now()
+
+	// Set IsActive based on whether this event type is enabled
+	// If no event types are configured, all events are considered active
+	if len(l.eventTypes) == 0 {
+		entry.IsActive = true
+	} else {
+		entry.IsActive = l.eventTypes[entry.EventType]
+	}
+
+	return nil
 }
 
-func (l *Logger) LogPolicy(policy map[string][][]string) {
-	if !l.IsEnabled() {
-		return
+// OnAfterEvent is called after an event completes.
+// It calculates the duration, logs the entry if active, and calls the user callback if set.
+func (l *Logger) OnAfterEvent(entry *log.LogEntry) error {
+	if entry == nil {
+		return fmt.Errorf("log entry is nil")
 	}
 
-	l.logger.Info("LogPolicy", zap.Object("policy", zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
-		for k, v := range policy {
-			if err := enc.AddArray(k, stringMatrix(v)); err != nil {
-				return err
+	entry.EndTime = time.Now()
+	entry.Duration = entry.EndTime.Sub(entry.StartTime)
+
+	// Only log if the event is active
+	if entry.IsActive && l.IsEnabled() {
+		// Build zap fields from log entry
+		fields := []zap.Field{
+			zap.String("event_type", string(entry.EventType)),
+			zap.Duration("duration", entry.Duration),
+		}
+
+		// Add event-specific fields
+		switch entry.EventType {
+		case log.EventEnforce:
+			fields = append(fields,
+				zap.String("subject", entry.Subject),
+				zap.String("object", entry.Object),
+				zap.String("action", entry.Action),
+				zap.String("domain", entry.Domain),
+				zap.Bool("allowed", entry.Allowed),
+			)
+
+		case log.EventAddPolicy, log.EventRemovePolicy, log.EventLoadPolicy, log.EventSavePolicy:
+			fields = append(fields, zap.Int("rule_count", entry.RuleCount))
+			if len(entry.Rules) > 0 {
+				fields = append(fields, zap.Array("rules", stringMatrix(entry.Rules)))
 			}
 		}
-		return nil
-	})))
-}
 
-func (l *Logger) LogRole(roles []string) {
-	if !l.IsEnabled() {
-		return
+		// Log at appropriate level
+		message := string(entry.EventType)
+		if entry.Error != nil {
+			fields = append(fields, zap.Error(entry.Error))
+			l.logger.Error(message, fields...)
+		} else {
+			l.logger.Info(message, fields...)
+		}
 	}
 
-	l.logger.Info("LogRole", zap.Strings("roles", roles))
-}
-
-func (l *Logger) LogError(err error, msg ...string) {
-	if !l.IsEnabled() {
-		return
+	// Call user-provided callback if set
+	if l.logCallback != nil {
+		return l.logCallback(entry)
 	}
 
-	l.logger.Error("LogError", zap.Error(err), zap.Strings("msg", msg))
+	return nil
+}
+
+// SetLogCallback sets a user-provided callback function.
+// The callback is called at the end of OnAfterEvent.
+func (l *Logger) SetLogCallback(callback func(entry *log.LogEntry) error) error {
+	l.logCallback = callback
+	return nil
 }
